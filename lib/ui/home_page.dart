@@ -64,7 +64,7 @@ class HomePage extends StatelessWidget {
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 16),
                     child: Text(
-                      '通信はしません。ログインも不要です。詳しくは右上の「このアプリについて」へ。',
+                      '通信するコードは入れていません。ログインも不要です。詳しくは右上の「このアプリについて」へ。',
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -89,8 +89,8 @@ void _showAbout(BuildContext context) {
           'みちAIワークス（MICHI AI WORKS）／代表 田中　泉\n'
           '運営: みちAIワークス 公式サイト（https://michi-portfolio.vercel.app/ ）\n'
           'お問い合わせ: nncf123nncf@gmail.com\n\n'
-          'このアプリは通信をしません。選んだファイルと名前は、お使いのパソコンの中だけで処理し、'
-          'サーバーには送信しません。保存するのは、名前のルールの設定だけです。\n\n'
+          'このアプリには、通信するコードを入れていません。選んだファイルと名前を、'
+          'サーバーへ送る仕組みはありません。保存するのは、名前のルールの設定だけです。\n\n'
           '元のファイルは変更しません。新しい名前のコピーを、選んだ保存先に書き出します。'
           '保存先に同じ名前があるときは、上書きせずに連番を付けます。\n\n'
           'ログイン・会員登録・パスワードの入力を求めることはありません。',
@@ -206,7 +206,7 @@ class _FilesSection extends StatelessWidget {
     return _SectionCard(
       title: '1. ファイルを選ぶ',
       children: [
-        const Text('このアプリは通信しません。元のファイルは変更しません。'),
+        const Text('このアプリには通信するコードを入れていません。元のファイルは変更しません。'),
         const SizedBox(height: 12),
         Wrap(
           spacing: 12,
