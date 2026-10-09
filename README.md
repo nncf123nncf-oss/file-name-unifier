@@ -7,6 +7,14 @@
 - アプリには通信するコードを入れていません（実行中の通信の有無までは計測していません）。ログイン・会員登録も要りません
 - 保存するのは、名前のルールの設定だけです（ファイル名やファイルの中身は保存しません）
 
+## ダウンロード
+
+[Releases](https://github.com/nncf123nncf-oss/file-name-unifier/releases/tag/v0.1.0) から、`file-name-totonoe-0.1.0-windows.zip` をダウンロードしてください（Windows 11・64bit で動作確認。11.8MB）。
+
+- SHA-256: `118826debce20fa1489fbca0691a7e77a4e9ad6e0f50694e77a7ac192538fe66`
+- zip を右クリック →「すべて展開」で、**フォルダごと**展開してから、`file_name_unifier.exe` を起動します
+- 署名をしていないため、初回は Windows の警告（SmartScreen）が出ることがあります。「詳細情報」→「実行」で起動できます。ダウンロードしたファイルの SHA-256 が上の値と一致することを、先に確かめられます（PowerShell: `Get-FileHash .ile-name-totonoe-0.1.0-windows.zip -Algorithm SHA256`）
+
 ## できること
 
 1. **ファイルを選ぶ**（複数。上限50件・合計100MB）
