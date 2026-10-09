@@ -729,7 +729,8 @@ class _PreviewTile extends StatelessWidget {
               children: [
                 Text(
                   '日付: ${formatDate(row.dateUsed!, DateStyle.hyphen)}'
-                  '（${row.notes.contains(RowNote.dateFromName) ? '元の名前から読み取り' : 'ファイルの更新日'}）',
+                  '（${row.notes.contains(RowNote.dateFromName) ? '元の名前から読み取り' : 'ファイルの更新日'}）'
+                  '${row.notes.contains(RowNote.dateFromName) && state.rule.usesPart(PartKind.original) ? '。名前の中の日付は取り除きます' : ''}',
                 ),
                 // 元の名前に日付が読めた行だけ、どちらを使うか選べる（型番を日付と読んだときの回避）
                 if (row.dateFoundInName == true)
@@ -739,7 +740,9 @@ class _PreviewTile extends StatelessWidget {
                       state.touch();
                     },
                     child: Text(
-                      input.preferModifiedDate ? '元の名前の日付を使う' : '更新日を使う',
+                      input.preferModifiedDate
+                          ? '元の名前の日付を使う'
+                          : '日付ではない？ 更新日を使う',
                     ),
                   ),
               ],

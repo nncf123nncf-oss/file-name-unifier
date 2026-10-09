@@ -164,7 +164,7 @@ void main() {
     );
     expect(result.okCount, 1);
     expect(
-      File('${out.path}${Platform.pathSeparator}見積書 №1 ＆ 資料.xlsx').existsSync(),
+      File('${out.path}${Platform.pathSeparator}見積書　№1 ＆ 資料.xlsx').existsSync(),
       isTrue,
     );
   });

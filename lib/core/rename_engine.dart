@@ -247,8 +247,12 @@ DateTime? _validDate(int y, int m, int d) {
   return date.year == y && date.month == m && date.day == d ? date : null;
 }
 
+/// 元の名前から読んだ日付と、その文字の範囲 [start, end)（名前の先頭からの位置）。
+typedef DateMatch = ({DateTime date, int start, int end});
+
 /// 元の名前に含まれる日付を読む。`2026-09-05` `2026.9.5` `20260905` `2026年9月5日` `R8.9.5`。
-DateTime? dateFromName(String name) {
+/// 全角数字は半角に直して読む（全角→半角は1文字ずつの置き換えなので、範囲は元の名前と同じ位置）。
+DateMatch? dateMatchInName(String name) {
   final s = toHalfWidth(name);
   final patterns = <RegExp>[
     RegExp(r'(?<!\d)(20\d{2})[-_.](\d{1,2})[-_.](\d{1,2})(?!\d)'),
@@ -262,7 +266,7 @@ DateTime? dateFromName(String name) {
         int.parse(m[2]!),
         int.parse(m[3]!),
       );
-      if (d != null) return d;
+      if (d != null) return (date: d, start: m.start, end: m.end);
     }
   }
   // 令和（R1 = 2019）
@@ -275,10 +279,12 @@ DateTime? dateFromName(String name) {
       int.parse(m[2]!),
       int.parse(m[3]!),
     );
-    if (d != null) return d;
+    if (d != null) return (date: d, start: m.start, end: m.end);
   }
   return null;
 }
+
+DateTime? dateFromName(String name) => dateMatchInName(name)?.date;
 
 String formatDate(DateTime d, DateStyle style) {
   String two(int n) => n.toString().padLeft(2, '0');
@@ -324,11 +330,29 @@ String _applyRanges(String text, List<(int, int)> ranges) {
   return buf.toString();
 }
 
-/// 取り除いたあとに残る連続空白と、先頭・末尾の空白・`_`・`-` を詰める。
+/// 範囲を、位置の順に並べて、重なる・隣り合うものを1つにまとめる。
+List<(int, int)> _mergeRanges(List<(int, int)> ranges) {
+  if (ranges.length < 2) return ranges;
+  final sorted = [...ranges]..sort((a, b) => a.$1.compareTo(b.$1));
+  final merged = <(int, int)>[sorted.first];
+  for (final r in sorted.skip(1)) {
+    final last = merged.last;
+    if (r.$1 <= last.$2) {
+      merged[merged.length - 1] = (last.$1, r.$2 > last.$2 ? r.$2 : last.$2);
+    } else {
+      merged.add(r);
+    }
+  }
+  return merged;
+}
+
+/// 取り除いたあとに残る連続した空白・`_`・`-` を1つに詰め、先頭・末尾の空白・`_`・`-` を落とす。
+/// 取り除いた名前にだけ使う（取り除くものが無い名前は、そのまま残す）。
 /// ドットは触らない（`.gitignore` のような名前を壊さない。末尾のドットは [_sanitize] が落とす）。
 String tidy(String s) {
-  final collapsed = s.replaceAll(RegExp(r'[ 　]+'), ' ');
-  return collapsed.replaceAll(RegExp(r'^[ _\-]+|[ _\-]+$'), '');
+  var t = s.replaceAll(RegExp(r'[ 　]+'), ' ');
+  t = t.replaceAll(RegExp(r'_{2,}'), '_').replaceAll(RegExp(r'-{2,}'), '-');
+  return t.replaceAll(RegExp(r'^[ _\-]+|[ _\-]+$'), '');
 }
 
 const Map<String, String> _invalidCharReplacement = {
@@ -398,10 +422,27 @@ PreviewRow _buildRow(
 ) {
   final notes = <RowNote>{};
   final (origBase, ext) = splitName(file.name);
-  final removed = findRemovedRanges(origBase, config.removeStrings);
 
-  String cleaned(String raw) =>
-      tidy(_applyRanges(raw, findRemovedRanges(raw, config.removeStrings)));
+  // 日付の部品があるとき、元の名前から日付を読む。読み取った日付を使う行では、
+  // 日付が二重にならないよう、元の名前の中のその日付を取り除く（更新日に切り替えた行は取り除かない）。
+  final dateMatch = config.usesPart(PartKind.date)
+      ? dateMatchInName(file.name)
+      : null;
+  final useNameDate = dateMatch != null && !file.preferModifiedDate;
+  final stripDate =
+      useNameDate &&
+      config.usesPart(PartKind.original) &&
+      dateMatch.end <= origBase.length;
+  final removed = _mergeRanges([
+    ...findRemovedRanges(origBase, config.removeStrings),
+    if (stripDate) (dateMatch.start, dateMatch.end),
+  ]);
+
+  // 取り除くものが無い欄は、そのまま使う（整形で名前を変えない）
+  String cleaned(String raw) {
+    final ranges = findRemovedRanges(raw, config.removeStrings);
+    return ranges.isEmpty ? raw : tidy(_applyRanges(raw, ranges));
+  }
 
   final values = <String>[];
   DateTime? dateUsed;
@@ -410,12 +451,12 @@ PreviewRow _buildRow(
     String value;
     switch (part.kind) {
       case PartKind.date:
-        final fromName = dateFromName(file.name);
-        dateFound = fromName != null;
-        final useName = fromName != null && !file.preferModifiedDate;
-        dateUsed = useName ? fromName : file.modified;
+        dateFound = dateMatch != null;
+        dateUsed = useNameDate ? dateMatch.date : file.modified;
         value = formatDate(dateUsed, config.dateStyle);
-        notes.add(useName ? RowNote.dateFromName : RowNote.dateFromModified);
+        notes.add(
+          useNameDate ? RowNote.dateFromName : RowNote.dateFromModified,
+        );
       case PartKind.partner:
         value = cleaned(file.partner.trim());
       case PartKind.docType:
@@ -437,7 +478,9 @@ PreviewRow _buildRow(
       case PartKind.sequence:
         value = seq.toString().padLeft(config.seqDigits, '0');
       case PartKind.original:
-        value = tidy(_applyRanges(origBase, removed));
+        value = removed.isEmpty
+            ? origBase
+            : tidy(_applyRanges(origBase, removed));
       case PartKind.literal:
         value = part.text.trim();
     }
