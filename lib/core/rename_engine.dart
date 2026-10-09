@@ -207,6 +207,7 @@ class PreviewRow {
     required this.removedRanges,
     this.dateUsed,
     this.dateFoundInName,
+    this.dateStripped = false,
   });
 
   final FileInput input;
@@ -218,6 +219,9 @@ class PreviewRow {
 
   /// 元の名前に日付が読めたか（読めたが更新日を選んだ場合も true）。日付の部品が無いときは null。
   final bool? dateFoundInName;
+
+  /// 元の名前から日付を取り除いたか（画面の「名前の中の日付は取り除きます」の表示に使う）。
+  final bool dateStripped;
 
   /// 元の名前（拡張子を除いた部分）のうち、取り除かれた範囲 [start, end)。
   final List<(int, int)> removedRanges;
@@ -259,6 +263,9 @@ DateMatch? dateMatchInName(String name) {
     RegExp(r'(?<!\d)(20\d{2})\s?年\s?(\d{1,2})\s?月\s?(\d{1,2})\s?日'),
     RegExp(r'(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)'),
   ];
+  // 実在する日付として読めたものを全部集め、名前の中で一番前にあるものを使う
+  // （名前に日付が複数あるとき、書式の種類ではなく位置で決める）
+  final found = <DateMatch>[];
   for (final re in patterns) {
     for (final m in re.allMatches(s)) {
       final d = _validDate(
@@ -266,7 +273,7 @@ DateMatch? dateMatchInName(String name) {
         int.parse(m[2]!),
         int.parse(m[3]!),
       );
-      if (d != null) return (date: d, start: m.start, end: m.end);
+      if (d != null) found.add((date: d, start: m.start, end: m.end));
     }
   }
   // 令和（R1 = 2019）
@@ -279,9 +286,34 @@ DateMatch? dateMatchInName(String name) {
       int.parse(m[2]!),
       int.parse(m[3]!),
     );
-    if (d != null) return (date: d, start: m.start, end: m.end);
+    if (d != null) found.add((date: d, start: m.start, end: m.end));
   }
-  return null;
+  if (found.isEmpty) return null;
+  found.sort(
+    (a, b) => a.start != b.start
+        ? a.start.compareTo(b.start)
+        : b.end.compareTo(a.end),
+  );
+  return found.first;
+}
+
+/// 日付を囲む対応する括弧（`(2026-10-09)` `【2026-10-09】` など）まで、取り除く範囲に含める。
+(int, int) _extendOverBrackets(String text, int start, int end) {
+  const pairs = {
+    '(': ')',
+    '（': '）',
+    '[': ']',
+    '［': '］',
+    '【': '】',
+    '「': '」',
+    '『': '』',
+    '<': '>',
+    '＜': '＞',
+  };
+  if (start > 0 && end < text.length && pairs[text[start - 1]] == text[end]) {
+    return (start - 1, end + 1);
+  }
+  return (start, end);
 }
 
 DateTime? dateFromName(String name) => dateMatchInName(name)?.date;
@@ -318,18 +350,6 @@ List<(int, int)> findRemovedRanges(String text, List<String> removeStrings) {
   return [for (final m in re.allMatches(text)) (m.start, m.end)];
 }
 
-String _applyRanges(String text, List<(int, int)> ranges) {
-  if (ranges.isEmpty) return text;
-  final buf = StringBuffer();
-  var pos = 0;
-  for (final (start, end) in ranges) {
-    buf.write(text.substring(pos, start));
-    pos = end;
-  }
-  buf.write(text.substring(pos));
-  return buf.toString();
-}
-
 /// 範囲を、位置の順に並べて、重なる・隣り合うものを1つにまとめる。
 List<(int, int)> _mergeRanges(List<(int, int)> ranges) {
   if (ranges.length < 2) return ranges;
@@ -346,13 +366,63 @@ List<(int, int)> _mergeRanges(List<(int, int)> ranges) {
   return merged;
 }
 
-/// 取り除いたあとに残る連続した空白・`_`・`-` を1つに詰め、先頭・末尾の空白・`_`・`-` を落とす。
-/// 取り除いた名前にだけ使う（取り除くものが無い名前は、そのまま残す）。
-/// ドットは触らない（`.gitignore` のような名前を壊さない。末尾のドットは [_sanitize] が落とす）。
-String tidy(String s) {
-  var t = s.replaceAll(RegExp(r'[ 　]+'), ' ');
-  t = t.replaceAll(RegExp(r'_{2,}'), '_').replaceAll(RegExp(r'-{2,}'), '-');
-  return t.replaceAll(RegExp(r'^[ _\-]+|[ _\-]+$'), '');
+const String _separatorChars = ' 　_-,，、';
+
+bool _isSeparator(String ch) => _separatorChars.contains(ch);
+
+String _trimLeadingSeparators(String s) {
+  var i = 0;
+  while (i < s.length && _isSeparator(s[i])) {
+    i++;
+  }
+  return s.substring(i);
+}
+
+String _trimTrailingSeparators(String s) {
+  var i = s.length;
+  while (i > 0 && _isSeparator(s[i - 1])) {
+    i--;
+  }
+  return s.substring(0, i);
+}
+
+/// [ranges]（位置順・重ならない）を取り除き、**取り除いた位置の前後だけ**を整える。
+///
+/// - 名前の先頭・末尾に来た取り除き跡の、前後の区切り（空白・`_`・`-`・`,`・`、`）を落とす
+/// - 前と後ろの両方に区切りが残るときは、前の区切りだけを残す（`A_` + `_B` → `A_B`）
+/// - 取り除いていない部分（`A--B` や先頭の `_` など）には触れない
+/// - ドットは触らない（`.gitignore` のような名前を壊さない。末尾のドットは [_sanitize] が落とす）
+String _removeAndTidy(String text, List<(int, int)> ranges) {
+  if (ranges.isEmpty) return text;
+  final segments = <String>[];
+  var pos = 0;
+  for (final (start, end) in ranges) {
+    segments.add(text.substring(pos, start));
+    pos = end;
+  }
+  segments.add(text.substring(pos));
+
+  var result = segments.first;
+  for (var i = 1; i < segments.length; i++) {
+    final right = segments[i];
+    final isLast = i == segments.length - 1;
+    final leftTrimmed = _trimTrailingSeparators(result);
+    if (leftTrimmed.isEmpty) {
+      // 取り除き跡が名前の先頭に来る（前に区切りしか無い場合も含む）
+      result = _trimLeadingSeparators(right);
+    } else if (right.isEmpty && isLast) {
+      // 取り除き跡が名前の末尾に来る
+      result = leftTrimmed;
+    } else {
+      final rightTrimmed = _trimLeadingSeparators(right);
+      final leftHasSeparator = leftTrimmed.length != result.length;
+      final rightHasSeparator = rightTrimmed.length != right.length;
+      result = leftHasSeparator && rightHasSeparator
+          ? result + rightTrimmed
+          : result + right;
+    }
+  }
+  return result;
 }
 
 const Map<String, String> _invalidCharReplacement = {
@@ -435,13 +505,15 @@ PreviewRow _buildRow(
       dateMatch.end <= origBase.length;
   final removed = _mergeRanges([
     ...findRemovedRanges(origBase, config.removeStrings),
-    if (stripDate) (dateMatch.start, dateMatch.end),
+    // 日付を括弧で囲んでいる名前（`請求書(2026-10-09)`）は、括弧ごと取り除く
+    if (stripDate)
+      _extendOverBrackets(origBase, dateMatch.start, dateMatch.end),
   ]);
 
   // 取り除くものが無い欄は、そのまま使う（整形で名前を変えない）
   String cleaned(String raw) {
     final ranges = findRemovedRanges(raw, config.removeStrings);
-    return ranges.isEmpty ? raw : tidy(_applyRanges(raw, ranges));
+    return ranges.isEmpty ? raw : _removeAndTidy(raw, ranges);
   }
 
   final values = <String>[];
@@ -478,9 +550,7 @@ PreviewRow _buildRow(
       case PartKind.sequence:
         value = seq.toString().padLeft(config.seqDigits, '0');
       case PartKind.original:
-        value = removed.isEmpty
-            ? origBase
-            : tidy(_applyRanges(origBase, removed));
+        value = removed.isEmpty ? origBase : _removeAndTidy(origBase, removed);
       case PartKind.literal:
         value = part.text.trim();
     }
@@ -527,6 +597,7 @@ PreviewRow _buildRow(
     removedRanges: fellBack ? const [] : removed,
     dateUsed: dateUsed,
     dateFoundInName: dateFound,
+    dateStripped: stripDate && !fellBack,
   );
 }
 

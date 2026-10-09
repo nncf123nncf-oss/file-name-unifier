@@ -125,4 +125,150 @@ void main() {
       expect(dateMatchInName('メモ20260230.txt'), isNull);
     });
   });
+  reviewThreeTests();
+}
+
+// 再レビュー③（minato-advocate）の指摘への対応。
+void reviewThreeTests() {
+  group('日付を囲む括弧は、括弧ごと取り除く', () {
+    test('丸括弧・全角括弧・隅付き括弧', () {
+      expect(
+        one(dateAndOriginal, f('請求書(2026-10-09).pdf')),
+        '20261009_請求書.pdf',
+      );
+      expect(
+        one(dateAndOriginal, f('【2026-10-09】請求書.pdf')),
+        '20261009_請求書.pdf',
+      );
+      expect(
+        one(dateAndOriginal, f('請求書（２０２６年１０月９日）.pdf')),
+        '20261009_請求書.pdf',
+      );
+    });
+
+    test('括弧が対応していないときは、日付だけを取り除く', () {
+      expect(
+        one(dateAndOriginal, f('請求書(2026-10-09】.pdf')),
+        '20261009_請求書(】.pdf',
+      );
+    });
+
+    test('取り消し線の範囲に、括弧が含まれる', () {
+      final row = buildPreview(dateAndOriginal, [
+        f('請求書(2026-10-09).pdf'),
+      ]).single;
+      expect(row.removedRanges, [(3, 15)]);
+    });
+  });
+
+  group('整形は、取り除いた位置の前後だけ', () {
+    const originalOnly = RuleConfig(parts: [RulePart(PartKind.original)]);
+
+    test('取り除いていない部分の -- や先頭の _ は壊さない', () {
+      expect(
+        one(dateAndOriginal, f('A-B--C_20261009.pdf')),
+        '20261009_A-B--C.pdf',
+      );
+      expect(
+        one(dateAndOriginal, f('_draft_20261009.pdf')),
+        '20261009__draft.pdf',
+      );
+      expect(
+        one(dateAndOriginal, f('-5度メモ_20261009.pdf')),
+        '20261009_-5度メモ.pdf',
+      );
+    });
+
+    test('取り除いた位置の両側に区切りが残るときは、前の区切りだけ残す', () {
+      expect(
+        one(dateAndOriginal, f('A--20261009--B.pdf')),
+        '20261009_A--B.pdf',
+      );
+      expect(one(originalOnly, f('A_コピー_B.pdf')), 'A_B.pdf');
+      expect(one(originalOnly, f('A - コピー - B.pdf')), 'A - B.pdf');
+    });
+
+    test('区切りが混在していても、残らない', () {
+      final rule = dateAndOriginal.copyWith(separator: '-');
+      expect(one(rule, f('A_2026-10-09-B.pdf')), '20261009-A_B.pdf');
+    });
+
+    test('数字のあとのカンマも、取り除き跡の区切りとして落とす', () {
+      expect(one(dateAndOriginal, f('1,2026-10-09.pdf')), '20261009_1.pdf');
+    });
+
+    test('先頭の取り除き跡では、前に区切りしか無くても落とす', () {
+      expect(one(originalOnly, f('_(1)B.pdf')), 'B.pdf');
+      expect(one(originalOnly, f('(1) 請求書.pdf')), '請求書.pdf');
+    });
+  });
+
+  group('複数の日付は、位置の早いものを使う', () {
+    test('書式の種類ではなく位置で決まる', () {
+      final m = dateMatchInName('20261010_2026-10-09.pdf')!;
+      expect(m.date, DateTime(2026, 10, 10));
+      expect(
+        one(dateAndOriginal, f('2026-10-09_2026-10-10.pdf')),
+        '20261009_2026-10-10.pdf',
+      );
+      expect(
+        one(dateAndOriginal, f('20261010_2026-10-09.pdf')),
+        '20261010_2026-10-09.pdf',
+      );
+    });
+  });
+
+  group('画面の「取り除きます」の表示条件（dateStripped）はエンジンと同じ', () {
+    test('取り除いた行だけ true', () {
+      expect(
+        buildPreview(dateAndOriginal, [
+          f('納品書_2026-10-09.pdf'),
+        ]).single.dateStripped,
+        isTrue,
+      );
+      expect(
+        buildPreview(dateAndOriginal, [f('メモ.txt')]).single.dateStripped,
+        isFalse,
+      );
+    });
+
+    test('更新日に切り替えた行は false', () {
+      final file = f('注文20250101.pdf')..preferModifiedDate = true;
+      expect(
+        buildPreview(dateAndOriginal, [file]).single.dateStripped,
+        isFalse,
+      );
+    });
+
+    test('日付が拡張子側にかかる名前（拡張子なし）は取り除かず、false のまま', () {
+      final row = buildPreview(dateAndOriginal, [f('memo.2026-10-09')]).single;
+      expect(row.dateStripped, isFalse);
+      expect(row.removedRanges, isEmpty);
+    });
+
+    test('日付の部品が無いルールでは false', () {
+      const rule = RuleConfig(parts: [RulePart(PartKind.original)]);
+      expect(
+        buildPreview(rule, [f('納品書_2026-10-09.pdf')]).single.dateStripped,
+        isFalse,
+      );
+    });
+  });
+
+  group('絵文字・珍しい漢字を含む名前でも、範囲がずれない', () {
+    test('サロゲートペアと全角の日付', () {
+      expect(
+        one(dateAndOriginal, f('😀２０２６年１０月９日請求.pdf')),
+        '20261009_😀請求.pdf',
+      );
+      expect(one(dateAndOriginal, f('𠮷2026-10-09.pdf')), '20261009_𠮷.pdf');
+    });
+
+    test('年月日の間の空白も取り除く', () {
+      expect(
+        one(dateAndOriginal, f('😀2026年 10月 9日請求.pdf')),
+        '20261009_😀請求.pdf',
+      );
+    });
+  });
 }
